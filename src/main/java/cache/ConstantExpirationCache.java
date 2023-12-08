@@ -2,7 +2,6 @@ package cache;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -73,8 +72,8 @@ public class ConstantExpirationCache<Key, Value> {
     }
 
     private void scheduleRecursiveCleaning() {
-        Duration tillNextExpiration = instantDifference(oldest.getValue().timestamp().plus(expiration),
-                                                        Instant.now());
+        Duration tillNextExpiration = Utils.instantDifference(oldest.getValue().timestamp().plus(expiration),
+                                                              Instant.now());
         scheduler.schedule(() -> {
             try {
                 lock.writeLock().lock();
@@ -94,13 +93,6 @@ public class ConstantExpirationCache<Key, Value> {
                 lock.writeLock().unlock();
             }
         }, tillNextExpiration.toNanos(), TimeUnit.NANOSECONDS);
-    }
-
-    public Duration instantDifference(Instant from, Instant to) {
-        return Duration.of(from.getEpochSecond(), ChronoUnit.SECONDS)
-                       .plus(from.getNano(), ChronoUnit.NANOS)
-                       .minus(to.getEpochSecond(), ChronoUnit.SECONDS)
-                       .minus(to.getNano(), ChronoUnit.NANOS);
     }
 
     /**
