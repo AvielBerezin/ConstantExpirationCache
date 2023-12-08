@@ -16,9 +16,9 @@ import static cache.DoubleLinkedNode.newestNode;
 import static cache.DoubleLinkedNode.onlyNode;
 
 public class ConstantExpirationCache<Key, Value> {
-    private final Map<Key, DoubleLinkedNode<TimestampedValue<Value>>> map;
-    private DoubleLinkedNode<TimestampedValue<Value>> newest;
-    private DoubleLinkedNode<TimestampedValue<Value>> oldest;
+    private final Map<Key, DoubleLinkedNode<TimestampedValue<Key, Value>>> map;
+    private DoubleLinkedNode<TimestampedValue<Key, Value>> newest;
+    private DoubleLinkedNode<TimestampedValue<Key, Value>> oldest;
     private final Duration expiration;
     private final ScheduledExecutorService scheduler;
     private final Consumer<Value> onExpiration;
@@ -55,12 +55,12 @@ public class ConstantExpirationCache<Key, Value> {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(value, "value");
             boolean wasEmpty = isEmpty();
-            DoubleLinkedNode<TimestampedValue<Value>> link = map.get(key);
+            DoubleLinkedNode<TimestampedValue<Key, Value>> link = map.get(key);
             unlink(link);
             if (newest == null) {
-                oldest = newest = onlyNode(new TimestampedValue<>(value));
+                oldest = newest = onlyNode(new TimestampedValue<>(key, value));
             } else {
-                newest = newestNode(newest, new TimestampedValue<>(value));
+                newest = newestNode(newest, new TimestampedValue<>(key, value));
                 newest.getOlder().setNewer(newest);
             }
             map.put(key, newest);
@@ -81,8 +81,10 @@ public class ConstantExpirationCache<Key, Value> {
                 while (oldest.getValue().timestamp()
                              .plus(expiration)
                              .isBefore(Instant.now())) {
+                    Key key = oldest.getValue().key;
                     Value expiredValue = oldest.getValue().value();
                     unlink(oldest);
+                    map.remove(key);
                     scheduler.execute(() -> onExpiration.accept(expiredValue));
                 }
                 if (oldest != null) {
@@ -114,14 +116,14 @@ public class ConstantExpirationCache<Key, Value> {
     public void remove(Key key) {
         try {
             lock.writeLock().lock();
-            DoubleLinkedNode<TimestampedValue<Value>> link = map.get(key);
+            DoubleLinkedNode<TimestampedValue<Key, Value>> link = map.get(key);
             unlink(link);
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    private void unlink(DoubleLinkedNode<TimestampedValue<Value>> link) {
+    private void unlink(DoubleLinkedNode<TimestampedValue<Key, Value>> link) {
         if (link == null) {
             return;
         }
@@ -172,5 +174,11 @@ public class ConstantExpirationCache<Key, Value> {
      */
     public int size() {
         return map.size();
+    }
+
+    private record TimestampedValue<Key, Value>(Instant timestamp, Key key, Value value) {
+        public TimestampedValue(Key key, Value value) {
+            this(Instant.now(), key, value);
+        }
     }
 }

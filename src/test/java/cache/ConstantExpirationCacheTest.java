@@ -17,7 +17,7 @@ public class ConstantExpirationCacheTest {
         Thread.sleep(200);
         cache.put(2, "world");
         Thread.sleep(1000);
-        Assertions.assertThat(cache.values(Collectors.reducing((ignored1, ignored2) -> ignored1)))
+        Assertions.assertThat(cache.values(Collectors.toList()))
                   .isEmpty();
     }
 }
