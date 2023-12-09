@@ -110,6 +110,7 @@ public class ConstantExpirationCache<Key, Value> {
             lock.writeLock().lock();
             DoubleLinkedNode<TimestampedValue<Key, Value>> link = map.get(key);
             unlink(link);
+            map.remove(key);
         } finally {
             lock.writeLock().unlock();
         }
