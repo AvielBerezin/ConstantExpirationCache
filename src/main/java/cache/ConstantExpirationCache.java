@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -14,7 +15,7 @@ import java.util.stream.Collector;
 import static cache.DoubleLinkedNode.newestNode;
 import static cache.DoubleLinkedNode.onlyNode;
 
-public class ConstantExpirationCache<Key, Value> {
+public class ConstantExpirationCache<Key, Value> implements AutoCloseable {
     private final Map<Key, DoubleLinkedNode<TimestampedValue<Key, Value>>> map;
     private DoubleLinkedNode<TimestampedValue<Key, Value>> newest;
     private DoubleLinkedNode<TimestampedValue<Key, Value>> oldest;
@@ -22,17 +23,24 @@ public class ConstantExpirationCache<Key, Value> {
     private final ScheduledExecutorService cleanerScheduler;
     private final Consumer<Value> onExpiration;
     private final ReadWriteLock lock;
-    private final ScheduledExecutorService onExpirationTaskListenerExecutor;
+    private final ScheduledExecutorService onExpirationTaskScheduler;
+    private boolean closed;
 
     public ConstantExpirationCache(Duration expiration,
-                                   ScheduledExecutorService onExpirationTaskListenerExecutor,
+                                   ScheduledExecutorService onExpirationTaskScheduler,
                                    Consumer<Value> onExpiration) {
         this.expiration = expiration;
         this.onExpiration = onExpiration;
         map = new HashMap<>();
-        cleanerScheduler = Executors.newSingleThreadScheduledExecutor();
+        ThreadFactory threadFactory = Executors.defaultThreadFactory();
+        cleanerScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = threadFactory.newThread(r);
+            thread.setDaemon(true);
+            return thread;
+        });
         lock = new ReentrantReadWriteLock();
-        this.onExpirationTaskListenerExecutor = onExpirationTaskListenerExecutor;
+        this.onExpirationTaskScheduler = onExpirationTaskScheduler;
+        closed = false;
     }
 
     /**
@@ -41,6 +49,9 @@ public class ConstantExpirationCache<Key, Value> {
     public Optional<Value> get(Key key) {
         try {
             lock.readLock().lock();
+            if (closed) {
+                throw new IllegalStateException("cache has been closed");
+            }
             return Optional.ofNullable(map.get(key))
                            .map(DoubleLinkedNode::getValue)
                            .map(TimestampedValue::value);
@@ -55,6 +66,9 @@ public class ConstantExpirationCache<Key, Value> {
     public void put(Key key, Value value) {
         try {
             lock.writeLock().lock();
+            if (closed) {
+                throw new IllegalStateException("cache has been closed");
+            }
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(value, "value");
             boolean wasEmpty = isEmpty();
@@ -88,7 +102,7 @@ public class ConstantExpirationCache<Key, Value> {
                     Value expiredValue = oldest.getValue().value();
                     unlink(oldest);
                     map.remove(key);
-                    onExpirationTaskListenerExecutor.execute(() -> onExpiration.accept(expiredValue));
+                    onExpirationTaskScheduler.execute(() -> onExpiration.accept(expiredValue));
                 }
                 if (oldest != null) {
                     scheduleRecursiveCleaning();
@@ -103,7 +117,15 @@ public class ConstantExpirationCache<Key, Value> {
      * O(1)
      */
     public boolean isEmpty() {
-        return newest == null;
+        try {
+            lock.readLock().lock();
+            if (closed) {
+                throw new IllegalStateException("cache has been closed");
+            }
+            return newest == null;
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     /**
@@ -112,6 +134,10 @@ public class ConstantExpirationCache<Key, Value> {
     public void remove(Key key) {
         try {
             lock.writeLock().lock();
+            if (closed) {
+                throw new IllegalStateException("cache has been closed");
+            }
+            Objects.requireNonNull(key, "key");
             DoubleLinkedNode<TimestampedValue<Key, Value>> link = map.get(key);
             unlink(link);
             map.remove(key);
@@ -144,6 +170,9 @@ public class ConstantExpirationCache<Key, Value> {
     public <Values> Values values(Collector<Value, ?, Values> valuesCollector) {
         try {
             lock.readLock().lock();
+            if (closed) {
+                throw new IllegalStateException("cache has been closed");
+            }
             return map.values()
                       .stream()
                       .map(DoubleLinkedNode::getValue)
@@ -160,6 +189,9 @@ public class ConstantExpirationCache<Key, Value> {
     public <Keys> Keys keys(Collector<Key, ?, Keys> keysCollector) {
         try {
             lock.readLock().lock();
+            if (closed) {
+                throw new IllegalStateException("cache has been closed");
+            }
             return map.keySet().stream().collect(keysCollector);
         } finally {
             lock.readLock().unlock();
@@ -170,7 +202,29 @@ public class ConstantExpirationCache<Key, Value> {
      * O(1)
      */
     public int size() {
-        return map.size();
+        try {
+            lock.readLock().lock();
+            return map.size();
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public void close() {
+        try {
+            lock.writeLock().lock();
+            if (closed) {
+                return;
+            }
+            cleanerScheduler.shutdownNow();
+            onExpirationTaskScheduler.shutdownNow();
+            map.clear();
+            newest = oldest = null;
+            closed = true;
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     private record TimestampedValue<Key, Value>(Instant timestamp, Key key, Value value) {
