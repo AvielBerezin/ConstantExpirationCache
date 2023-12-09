@@ -18,7 +18,7 @@ import java.util.stream.Stream;
 public class ConstantExpirationCacheTest {
     @Test
     public void expiredValuesAreNotPresent() throws InterruptedException {
-        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), ignored -> {});
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), Executors.newSingleThreadScheduledExecutor(), ignored -> {});
         cache.put(1, "hello");
         Thread.sleep(200);
         cache.put(2, "world");
@@ -31,7 +31,7 @@ public class ConstantExpirationCacheTest {
     public void onExpirationIsCalledWhenReached() throws InterruptedException {
         @SuppressWarnings("unchecked")
         Consumer<String> onExpiration = Mockito.mock(Consumer.class);
-        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), onExpiration);
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), Executors.newSingleThreadScheduledExecutor(), onExpiration);
         cache.put(1, "hello");
         Thread.sleep(200);
         cache.put(2, "world");
@@ -47,7 +47,7 @@ public class ConstantExpirationCacheTest {
     public void onExpirationIsCanceledByRemoval() throws InterruptedException {
         @SuppressWarnings("unchecked")
         Consumer<String> onExpiration = Mockito.mock(Consumer.class);
-        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), onExpiration);
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), Executors.newSingleThreadScheduledExecutor(), onExpiration);
         cache.put(1, "hello");
         Thread.sleep(200);
         cache.put(2, "world");
@@ -61,7 +61,7 @@ public class ConstantExpirationCacheTest {
     public void onExpirationIsRenewedByUpdate() throws InterruptedException {
         @SuppressWarnings("unchecked")
         Consumer<String> onExpiration = Mockito.mock(Consumer.class);
-        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), onExpiration);
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), Executors.newSingleThreadScheduledExecutor(), onExpiration);
         cache.put(1, "hello");
         Thread.sleep(200);
         cache.put(2, "world");
@@ -79,7 +79,7 @@ public class ConstantExpirationCacheTest {
     public void remove() throws InterruptedException {
         @SuppressWarnings("unchecked")
         Consumer<String> onExpiration = Mockito.mock(Consumer.class);
-        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), onExpiration);
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), Executors.newSingleThreadScheduledExecutor(), onExpiration);
         cache.put(1, "hello");
         Thread.sleep(200);
         cache.put(2, "world");
@@ -96,14 +96,14 @@ public class ConstantExpirationCacheTest {
         ConcurrentLinkedQueue<String> expired = new ConcurrentLinkedQueue<>();
         Consumer<String> onExpiration = expired::add;
         Random random = new Random();
-        int size = 2_000_000;
+        int size = 5_000_000;
         List<Integer> integers = Stream.iterate(0, x -> x + 1).limit(size).collect(Collectors.toList());
         List<String> strings = Stream.iterate(0, x -> x + 1).limit(size)
                                      .map(i -> Integer.toUnsignedString(i, 10 + 26))
                                      .collect(Collectors.toList());
         Utils.shuffle(random, integers);
         Utils.shuffle(random, strings);
-        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofNanos(500_000L), onExpiration);
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofNanos(500_000L), Executors.newSingleThreadScheduledExecutor(), onExpiration);
         Instant before = Instant.now();
         for (int i = 0; i < integers.size() && i < strings.size(); i++) {
             cache.put(integers.get(i), strings.get(i));
@@ -111,14 +111,15 @@ public class ConstantExpirationCacheTest {
         System.out.printf("insertion of %d took %s%n",
                           size,
                           Utils.instantDifference(Instant.now(), before));
-        Thread.sleep(Duration.ofNanos(10_000_000L));
+        Thread.sleep(Duration.ofNanos(5_000_000L));
         ArrayList<String> expiredAsArrayList = new ArrayList<>(expired);
         for (int i = 0; i < expiredAsArrayList.size() && i < strings.size(); i++) {
             Assertions.assertThat(expiredAsArrayList.get(i))
                       .describedAs("index %d", i)
                       .isEqualTo(strings.get(i));
         }
-        Assertions.assertThat(cache.values(Collectors.toList())).isEmpty();
+        Assertions.assertThat(cache.values(Collectors.toList())).withRepresentation(Object::toString).isEmpty();
+        Assertions.assertThat(expired).withRepresentation(Object::toString).hasSize(size);
     }
 
     @Test
@@ -134,7 +135,7 @@ public class ConstantExpirationCacheTest {
         HashSet<String> stringsAsSet = new HashSet<>(strings);
         Utils.shuffle(random, integers);
         Utils.shuffle(random, strings);
-        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofNanos(500_000L), onExpiration);
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofNanos(500_000L), Executors.newSingleThreadScheduledExecutor(), onExpiration);
         try (ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(Runtime.getRuntime().availableProcessors())) {
             CountDownLatch count = new CountDownLatch(size);
             Instant before = Instant.now();

@@ -19,16 +19,20 @@ public class ConstantExpirationCache<Key, Value> {
     private DoubleLinkedNode<TimestampedValue<Key, Value>> newest;
     private DoubleLinkedNode<TimestampedValue<Key, Value>> oldest;
     private final Duration expiration;
-    private final ScheduledExecutorService scheduler;
+    private final ScheduledExecutorService cleanerScheduler;
     private final Consumer<Value> onExpiration;
     private final ReadWriteLock lock;
+    private final ScheduledExecutorService onExpirationTaskListenerExecutor;
 
-    public ConstantExpirationCache(Duration expiration, Consumer<Value> onExpiration) {
+    public ConstantExpirationCache(Duration expiration,
+                                   ScheduledExecutorService onExpirationTaskListenerExecutor,
+                                   Consumer<Value> onExpiration) {
         this.expiration = expiration;
         this.onExpiration = onExpiration;
         map = new HashMap<>();
-        scheduler = Executors.newSingleThreadScheduledExecutor();
+        cleanerScheduler = Executors.newSingleThreadScheduledExecutor();
         lock = new ReentrantReadWriteLock();
+        this.onExpirationTaskListenerExecutor = onExpirationTaskListenerExecutor;
     }
 
     /**
@@ -74,7 +78,7 @@ public class ConstantExpirationCache<Key, Value> {
     private void scheduleRecursiveCleaning() {
         Duration tillNextExpiration = Utils.instantDifference(oldest.getValue().timestamp().plus(expiration),
                                                               Instant.now());
-        scheduler.schedule(() -> {
+        cleanerScheduler.schedule(() -> {
             try {
                 lock.writeLock().lock();
                 while (oldest.getValue().timestamp()
@@ -84,7 +88,7 @@ public class ConstantExpirationCache<Key, Value> {
                     Value expiredValue = oldest.getValue().value();
                     unlink(oldest);
                     map.remove(key);
-                    scheduler.execute(() -> onExpiration.accept(expiredValue));
+                    onExpirationTaskListenerExecutor.execute(() -> onExpiration.accept(expiredValue));
                 }
                 if (oldest != null) {
                     scheduleRecursiveCleaning();
