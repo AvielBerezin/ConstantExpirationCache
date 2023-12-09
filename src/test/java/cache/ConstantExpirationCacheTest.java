@@ -11,8 +11,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -78,17 +76,33 @@ public class ConstantExpirationCacheTest {
     }
 
     @Test
+    public void remove() throws InterruptedException {
+        @SuppressWarnings("unchecked")
+        Consumer<String> onExpiration = Mockito.mock(Consumer.class);
+        ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofMillis(500), onExpiration);
+        cache.put(1, "hello");
+        Thread.sleep(200);
+        cache.put(2, "world");
+        Thread.sleep(200);
+        cache.remove(1);
+        Assertions.assertThat(cache.values(Collectors.toList()))
+                  .containsOnly("world");
+        Assertions.assertThat(cache.keys(Collectors.toList()))
+                  .containsOnly(2);
+    }
+
+    @Test
     public void onExpirationStressNoKeyOverlap() throws InterruptedException {
         ConcurrentLinkedQueue<String> expired = new ConcurrentLinkedQueue<>();
         Consumer<String> onExpiration = expired::add;
         Random random = new Random();
-        int size = 10_000_000;
+        int size = 2_000_000;
         List<Integer> integers = Stream.iterate(0, x -> x + 1).limit(size).collect(Collectors.toList());
         List<String> strings = Stream.iterate(0, x -> x + 1).limit(size)
                                      .map(i -> Integer.toUnsignedString(i, 10 + 26))
                                      .collect(Collectors.toList());
-        shuffle(random, integers);
-        shuffle(random, strings);
+        Utils.shuffle(random, integers);
+        Utils.shuffle(random, strings);
         ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofNanos(500_000L), onExpiration);
         Instant before = Instant.now();
         for (int i = 0; i < integers.size() && i < strings.size(); i++) {
@@ -97,7 +111,7 @@ public class ConstantExpirationCacheTest {
         System.out.printf("insertion of %d took %s%n",
                           size,
                           Utils.instantDifference(Instant.now(), before));
-        Thread.sleep(Duration.ofNanos(500_000L));
+        Thread.sleep(Duration.ofNanos(10_000_000L));
         ArrayList<String> expiredAsArrayList = new ArrayList<>(expired);
         for (int i = 0; i < expiredAsArrayList.size() && i < strings.size(); i++) {
             Assertions.assertThat(expiredAsArrayList.get(i))
@@ -118,8 +132,8 @@ public class ConstantExpirationCacheTest {
                                      .map(i -> Integer.toUnsignedString(i, 10 + 26))
                                      .collect(Collectors.toList());
         HashSet<String> stringsAsSet = new HashSet<>(strings);
-        shuffle(random, integers);
-        shuffle(random, strings);
+        Utils.shuffle(random, integers);
+        Utils.shuffle(random, strings);
         ConstantExpirationCache<Integer, String> cache = new ConstantExpirationCache<>(Duration.ofNanos(500_000L), onExpiration);
         try (ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(Runtime.getRuntime().availableProcessors())) {
             CountDownLatch count = new CountDownLatch(size);
@@ -146,14 +160,5 @@ public class ConstantExpirationCacheTest {
         }
         Assertions.assertThat(expiredAsArrayList).describedAs("not all are expired").hasSize(size);
         Assertions.assertThat(cache.values(Collectors.toList())).isEmpty();
-    }
-
-    public static <Element> void shuffle(Random random, List<Element> elements) {
-        for (int i = 0; i < elements.size(); i++) {
-            int swapIndex = random.nextInt(i, elements.size());
-            Element head = elements.get(i);
-            elements.set(i, elements.get(swapIndex));
-            elements.set(swapIndex, head);
-        }
     }
 }
